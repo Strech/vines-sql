@@ -1,4 +1,5 @@
 require 'active_record'
+require 'digest/sha1'
 
 module Vines
   class Storage
@@ -15,6 +16,14 @@ module Vines
       class User < ActiveRecord::Base
         has_many :contacts,  :dependent => :destroy
         has_many :fragments, :dependent => :delete_all
+      end
+
+      class Collection < ActiveRecord::Base
+        has_many :messages
+      end
+
+      class Message < ActiveRecord::Base
+        belongs_to :collection
       end
 
       # Wrap the method with ActiveRecord connection pool logic, so we properly
@@ -55,6 +64,7 @@ module Vines
       def find_user(jid)
         jid = JID.new(jid).bare.to_s
         return if jid.empty?
+
         xuser = user_by_jid(jid)
         return Vines::User.new(jid: jid).tap do |user|
           user.name, user.password = xuser.name, xuser.password
@@ -146,6 +156,26 @@ module Vines
       end
       with_connection :save_fragment
 
+      def save_message(message)
+        from = message.from.bare.to_s
+        with = message.to.bare.to_s
+
+        hash = Digest::SHA1.hexdigest([from, with].sort * "|")
+
+        collection = Sql::Collection.where(hash: hash).first_or_create(
+          jid_from: from,
+          jid_with: with,
+          created_at: Time.now.utc
+        )
+
+        collection.messages.create(
+          jid: from,
+          body: message.css("body").inner_text,
+          created_at: Time.now.utc
+        )
+      end
+      with_connection :save_message
+
       # Create the tables and indexes used by this storage engine.
       def create_schema(args={})
         args[:force] ||= false
@@ -186,6 +216,25 @@ module Vines
             t.text    :xml,       null: false
           end
           add_index :fragments, [:user_id, :root, :namespace], unique: true
+
+          # Archive
+          create_table :collections, force: args[:force] do |t|
+            t.string :jid_from,     limit: 256, null: false
+            t.string :jid_with,     limit: 256, null: false
+            t.string :hash,         limit: 40, null: false
+            t.datetime :created_at, null: false
+          end
+          add_index :collections, [:jid_from, :jid_with], unique: true
+          add_index :collections, :hash, unique: true
+
+          create_table :messages, force: args[:force] do |t|
+            t.integer :collection_id, null: false
+            t.string :jid,            limit: 256, null: false
+            t.text :body,             null: false
+            t.datetime :created_at,   null: false
+          end
+          add_index :messages, [:collection_id, :jid]
+
         end
       end
       with_connection :create_schema, defer: false
@@ -202,8 +251,8 @@ module Vines
       end
 
       def user_by_jid(jid)
-        jid = JID.new(jid).bare.to_s
-        Sql::User.find_by_jid(jid, :include => {:contacts => :groups})
+        jid = jid.is_a?(JID) ? jid.bare.to_s : JID.new(jid).bare.to_s
+        Sql::User.where(jid: jid).includes(:contacts => :groups).first
       end
 
       def fragment_by_jid(jid, node)
