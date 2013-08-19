@@ -162,7 +162,7 @@ module Vines
 
         hash = Digest::SHA1.hexdigest([from, with].sort * "|")
 
-        collection = Sql::Collection.where(hash: hash).first_or_create(
+        collection = Sql::Collection.where(jids_hash: hash).first_or_create(
           jid_from: from,
           jid_with: with,
           created_at: Time.now.utc
@@ -221,11 +221,11 @@ module Vines
           create_table :collections, force: args[:force] do |t|
             t.string :jid_from,     limit: 256, null: false
             t.string :jid_with,     limit: 256, null: false
-            t.string :hash,         limit: 40, null: false
+            t.string :jids_hash,    limit: 40, null: false
             t.datetime :created_at, null: false
           end
           add_index :collections, [:jid_from, :jid_with], unique: true
-          add_index :collections, :hash, unique: true
+          add_index :collections, :jids_hash, unique: true
 
           create_table :messages, force: args[:force] do |t|
             t.integer :collection_id, null: false
