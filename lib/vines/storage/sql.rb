@@ -160,7 +160,7 @@ module Vines
         from = message.from.bare.to_s
         with = message.to.bare.to_s
 
-        hash = Digest::SHA1.hexdigest([from, with].sort * "|")
+        hash = Digest::SHA1.hexdigest([from, with].sort * '|')
 
         collection = Sql::Collection.where(jids_hash: hash).first_or_create(
           jid_from: from,
@@ -170,11 +170,64 @@ module Vines
 
         collection.messages.create(
           jid: from,
-          body: message.css("body").inner_text,
+          body: message.css('body').inner_text,
           created_at: Time.now.utc
         )
       end
       with_connection :save_message
+
+      def find_collections(jid, options)
+        jid = JID.new(jid).bare.to_s
+
+        if options[:with].nil?
+          with_jid = Sql::Collection.arel_table[:jid_with].eq(jid)
+          from_jid = Sql::Collection.arel_table[:jid_from].eq(jid)
+
+          condition = with_jid.or(from_jid)
+        else
+          with = JID.new(options[:with]).bare.to_s
+          hash = Digest::SHA1.hexdigest([jid, with].sort * '|')
+
+          condition = Sql::Collection.arel_table[:jids_hash].eq(hash)
+        end
+
+        unless options[:start].nil?
+          start = Sql::Collection.arel_table[:created_at].gteq(options[:start].utc)
+          condition = condition.and(time_condition)
+        end
+
+        unless options[:end].nil?
+          finish = Sql::Collection.arel_table[:created_at].lteq(options[:end].utc)
+          condition = condition.and(finish)
+        end
+
+        [
+          Sql::Collection.where(condition).order(:created_at).limit(options[:rsm].max).all,
+          Sql::Collection.where(condition).count
+        ]
+      end
+
+      def find_messages(jid, with, options)
+        jid   = JID.new(jid).bare.to_s
+        with  = JID.new(with).bare.to_s
+
+        hash = Digest::SHA1.hexdigest([jid, with].sort * '|')
+        jids_condition = Sql::Collection.arel_table[:jids_hash].eq(hash)
+        time_condition = Sql::Message.arel_table[:created_at].gteq(options[:start].utc)
+
+        unless options[:end].nil?
+          finish = Sql::Message.arel_table[:created_at].lteq(options[:end].utc)
+          time_condition = time_condition.and(finish)
+        end
+
+        [
+          Sql::Message.where(jids_condition)
+                      .where(time_condition).joins(:collection).order(:created_at)
+                      .limit(options[:rsm].max).all,
+          Sql::Message.where(jids_condition)
+                      .where(time_condition).joins(:collection).count
+        ]
+      end
 
       # Create the tables and indexes used by this storage engine.
       def create_schema(args={})
@@ -234,6 +287,7 @@ module Vines
             t.datetime :created_at,   null: false
           end
           add_index :messages, [:collection_id, :jid]
+          add_index :messages, :created_at
 
         end
       end
