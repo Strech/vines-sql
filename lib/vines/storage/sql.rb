@@ -206,6 +206,7 @@ module Vines
           Sql::Collection.where(condition).count
         ]
       end
+      with_connection :find_collections
 
       def find_messages(jid, with, options)
         jid   = JID.new(jid).bare.to_s
@@ -228,6 +229,7 @@ module Vines
                       .where(time_condition).joins(:collection).count
         ]
       end
+      with_connection :find_messages
 
       # Create the tables and indexes used by this storage engine.
       def create_schema(args={})
@@ -292,6 +294,13 @@ module Vines
         end
       end
       with_connection :create_schema, defer: false
+
+      def migrate
+        migrations_path = File.expand_path('../db/migrations', __FILE__)
+
+        ActiveRecord::Migrator.migrate(migrations_path, ENV["VERSION"] ? ENV["VERSION"].to_i : nil)
+      end
+      with_connection :migrate, defer: false
 
       private
 
