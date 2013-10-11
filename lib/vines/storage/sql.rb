@@ -6,16 +6,29 @@ module Vines
     class Sql < Storage
       register :sql
 
+      MAX_PENDING_STANZAS_PER_USER = 1000
+      PENDING_STANZAS_BATCH_SIZE   = 50
+
       class Contact < ActiveRecord::Base
         belongs_to :user
       end
+
       class Fragment < ActiveRecord::Base
         belongs_to :user
       end
+
+      class PendingStanza < ActiveRecord::Base
+        belongs_to :user
+      end
+
       class Group < ActiveRecord::Base; end
+
       class User < ActiveRecord::Base
-        has_many :contacts,  :dependent => :destroy
-        has_many :fragments, :dependent => :delete_all
+        has_many :contacts,        dependent: :destroy
+        has_many :fragments,       dependent: :delete_all
+        has_many :pending_stanzas, dependent: :delete_all
+
+        # TODO : Add collections association
       end
 
       class Collection < ActiveRecord::Base
@@ -61,8 +74,16 @@ module Vines
         establish_connection
       end
 
+      def user_exists?(jid)
+        jid = jidify(jid)
+        return false if jid.empty?
+
+        Sql::User.where(jid: jid).exists?
+      end
+      with_connection :user_exists?
+
       def find_user(jid)
-        jid = JID.new(jid).bare.to_s
+        jid = jidify(jid)
         return if jid.empty?
 
         xuser = user_by_jid(jid)
@@ -118,7 +139,7 @@ module Vines
       with_connection :save_user
 
       def find_vcard(jid)
-        jid = JID.new(jid).bare.to_s
+        jid = jidify(jid)
         return if jid.empty?
         if xuser = user_by_jid(jid)
           Nokogiri::XML(xuser.vcard).root rescue nil
@@ -136,7 +157,7 @@ module Vines
       with_connection :save_vcard
 
       def find_fragment(jid, node)
-        jid = JID.new(jid).bare.to_s
+        jid = jidify(jid)
         return if jid.empty?
         if fragment = fragment_by_jid(jid, node)
           Nokogiri::XML(fragment.xml).root rescue nil
@@ -145,7 +166,7 @@ module Vines
       with_connection :find_fragment
 
       def save_fragment(jid, node)
-        jid = JID.new(jid).bare.to_s
+        jid = jidify(jid)
         fragment = fragment_by_jid(jid, node) ||
           Sql::Fragment.new(
             user: user_by_jid(jid),
@@ -177,7 +198,7 @@ module Vines
       with_connection :save_message
 
       def find_collections(jid, options)
-        jid = JID.new(jid).bare.to_s
+        jid = jidify(jid)
 
         if options[:with].nil?
           with_jid = Sql::Collection.arel_table[:jid_with].eq(jid)
@@ -209,8 +230,8 @@ module Vines
       with_connection :find_collections
 
       def find_messages(jid, with, options)
-        jid   = JID.new(jid).bare.to_s
-        with  = JID.new(with).bare.to_s
+        jid   = jidify(jid)
+        with  = jidify(with)
 
         hash = Digest::SHA1.hexdigest([jid, with].sort * '|')
         jids_condition = Sql::Collection.arel_table[:jids_hash].eq(hash)
@@ -230,6 +251,49 @@ module Vines
         ]
       end
       with_connection :find_messages
+
+      def save_pending_stanza(jid, node)
+        user = Sql::User.where(jid: jidify(jid)).first
+        return if user.nil? || user.pending_stanzas.count >= MAX_PENDING_STANZAS_PER_USER
+
+        Sql::PendingStanza.create(user: user, xml: node.to_xml)
+      end
+      with_connection :save_pending_stanza
+
+      def find_pending_stanzas(jid, limit = PENDING_STANZAS_BATCH_SIZE)
+        user = Sql::User.where(jid: jidify(jid)).first
+        return [] if user.nil?
+
+        user.pending_stanzas.order(:created_at).limit(limit).all
+      end
+      with_connection :find_pending_stanzas
+
+      def iterate_pending_stanzas(jid, callback, limit = PENDING_STANZAS_BATCH_SIZE)
+        user = Sql::User.where(jid: jidify(jid)).first
+        return if user.nil?
+
+        loop do
+          stanzas = user.pending_stanzas.order(:created_at).limit(limit).all
+          break if stanzas.empty?
+
+          callback.call(stanzas)
+
+          Sql::PendingStanza.where(id: stanzas.map { |x| x.id }).delete_all
+        end
+      end
+      with_connection :iterate_pending_stanzas
+
+      def delete_pending_stanzas(jid_or_ids)
+        if jid_or_ids.is_a?(Array)
+          Sql::PendingStanza.where(id: jid_or_ids).delete_all
+        else
+          user = Sql::User.where(jid: jidify(jid)).first
+          return if user.nil?
+
+          user.pending_stanzas.delete_all
+        end
+      end
+      with_connection :delete_pending_stanzas
 
       # Create the tables and indexes used by this storage engine.
       def create_schema(args={})
@@ -291,18 +355,30 @@ module Vines
           add_index :messages, [:collection_id, :jid]
           add_index :messages, :created_at
 
+          create_table :pending_stanzas, force: args[:force] do |t|
+            t.integer  :user_id,    null: false
+            t.text     :xml,        null: false
+            t.datetime :created_at, null: false
+          end
+          add_index :pending_stanzas, :user_id
+        end
+
+        ActiveRecord::Migrator.migrations(migrations_path).each do |migration|
+          m = ActiveRecord::Migrator.new(:up, migrations_path, 30000000000000)
+          m.send(:record_version_state_after_migrating, migration.version)
         end
       end
       with_connection :create_schema, defer: false
 
       def migrate
-        migrations_path = File.expand_path('../db/migrations', __FILE__)
-
         ActiveRecord::Migrator.migrate(migrations_path, ENV["VERSION"] ? ENV["VERSION"].to_i : nil)
       end
       with_connection :migrate, defer: false
 
       private
+      def migrations_path
+        File.expand_path(File.join('..', 'db', 'migrations'), __FILE__)
+      end
 
       def establish_connection
         ActiveRecord::Base.logger = Logger.new('/dev/null')
@@ -314,12 +390,15 @@ module Vines
       end
 
       def user_by_jid(jid)
-        jid = jid.is_a?(JID) ? jid.bare.to_s : JID.new(jid).bare.to_s
-        Sql::User.where(jid: jid).includes(:contacts => :groups).first
+        Sql::User.where(jid: jidify(jid)).includes(:contacts => :groups).first
+      end
+
+      def jidify(jid)
+        jid.is_a?(JID) ? jid.bare.to_s : JID.new(jid).bare.to_s
       end
 
       def fragment_by_jid(jid, node)
-        jid = JID.new(jid).bare.to_s
+        jid = jidify(jid)
         clause = 'user_id=(select id from users where jid=?) and root=? and namespace=?'
         Sql::Fragment.where(clause, jid, node.name, node.namespace.href).first
       end
@@ -330,3 +409,5 @@ module Vines
     end
   end
 end
+
+# TODO : Split file
