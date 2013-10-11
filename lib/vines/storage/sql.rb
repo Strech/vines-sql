@@ -260,6 +260,7 @@ module Vines
       end
       with_connection :save_pending_stanza
 
+      # TODO : ADD automatic bang method generation
       def find_pending_stanzas(jid, limit = PENDING_STANZAS_BATCH_SIZE)
         user = Sql::User.where(jid: jidify(jid)).first
         return [] if user.nil?
@@ -267,21 +268,6 @@ module Vines
         user.pending_stanzas.order(:created_at).limit(limit).all
       end
       with_connection :find_pending_stanzas
-
-      def iterate_pending_stanzas(jid, callback, limit = PENDING_STANZAS_BATCH_SIZE)
-        user = Sql::User.where(jid: jidify(jid)).first
-        return if user.nil?
-
-        loop do
-          stanzas = user.pending_stanzas.order(:created_at).limit(limit).all
-          break if stanzas.empty?
-
-          callback.call(stanzas)
-
-          Sql::PendingStanza.where(id: stanzas.map { |x| x.id }).delete_all
-        end
-      end
-      with_connection :iterate_pending_stanzas
 
       def delete_pending_stanzas(jid_or_ids)
         if jid_or_ids.is_a?(Array)
@@ -294,6 +280,8 @@ module Vines
         end
       end
       with_connection :delete_pending_stanzas
+
+      
 
       # Create the tables and indexes used by this storage engine.
       def create_schema(args={})
