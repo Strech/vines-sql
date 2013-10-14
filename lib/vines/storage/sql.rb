@@ -46,12 +46,23 @@ module Vines
       def self.with_connection(method, args={})
         deferrable = args.key?(:defer) ? args[:defer] : true
         old = instance_method(method)
+
+        # Define EM-safe method
         define_method method do |*args|
           ActiveRecord::Base.connection_pool.with_connection do
             old.bind(self).call(*args)
           end
         end
         defer(method) if deferrable
+
+        # And define EM-blocking method with bang! name
+        if deferrable
+          define_method "#{method}!" do |*args|
+            ActiveRecord::Base.connection_pool.with_connection do
+              old.bind(self).call(*args)
+            end
+          end
+        end
       end
 
       %w[adapter host port database username password pool].each do |name|
