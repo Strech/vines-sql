@@ -37,6 +37,8 @@ module Vines
         belongs_to :collection
       end
 
+      RenewedMessage = Struct.new(:jid_from, :body)
+
       # Wrap the method with ActiveRecord connection pool logic, so we properly
       # return connections to the pool when we're finished with them. This also
       # defers the original method by pushing it onto the EM thread pool because
@@ -46,18 +48,18 @@ module Vines
         old = instance_method(method)
 
         # Define EM-safe method
-        define_method method do |*args|
+        define_method method do |*args, &block|
           ActiveRecord::Base.connection_pool.with_connection do
-            old.bind(self).call(*args)
+            old.bind(self).call(*args, &block)
           end
         end
         defer(method) if deferrable
 
         # And define EM-blocking method with bang! name
         if deferrable
-          define_method "#{method}!" do |*args|
+          define_method "#{method}!" do |*args, &block|
             ActiveRecord::Base.connection_pool.with_connection do
-              old.bind(self).call(*args)
+              old.bind(self).call(*args, &block)
             end
           end
         end
@@ -93,7 +95,7 @@ module Vines
         Sql::Group.has_and_belongs_to_many :contacts
       end
 
-      def jidify(jid)
+      def stringify_jid(jid)
         jid.is_a?(JID) ? jid.bare.to_s : JID.new(jid).bare.to_s
       end
 

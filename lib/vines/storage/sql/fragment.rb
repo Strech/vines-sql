@@ -5,7 +5,7 @@ module Vines
     class Sql
 
       def find_fragment(jid, node)
-        jid = jidify(jid)
+        jid = stringify_jid(jid)
         return if jid.empty?
         if fragment = fragment_by_jid(jid, node)
           Nokogiri::XML(fragment.xml).root rescue nil
@@ -13,7 +13,7 @@ module Vines
       end
 
       def save_fragment(jid, node)
-        jid = jidify(jid)
+        jid = stringify_jid(jid)
         fragment = fragment_by_jid(jid, node) ||
           Sql::Fragment.new(
             user: user_by_jid(jid),
@@ -28,7 +28,7 @@ module Vines
 
       private
       def fragment_by_jid(jid, node)
-        jid = jidify(jid)
+        jid = stringify_jid(jid)
         clause = 'user_id=(select id from users where jid=?) and root=? and namespace=?'
         Sql::Fragment.where(clause, jid, node.name, node.namespace.href).first
       end

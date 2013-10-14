@@ -5,7 +5,7 @@ module Vines
     class Sql
 
       def find_vcard(jid)
-        jid = jidify(jid)
+        jid = stringify_jid(jid)
         return if jid.empty?
         if xuser = user_by_jid(jid)
           Nokogiri::XML(xuser.vcard).root rescue nil

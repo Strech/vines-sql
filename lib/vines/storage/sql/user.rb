@@ -5,14 +5,14 @@ module Vines
     class Sql
 
       def user_exists?(jid)
-        jid = jidify(jid)
+        jid = stringify_jid(jid)
         return false if jid.empty?
 
         Sql::User.where(jid: jid).exists?
       end
 
       def find_user(jid)
-        jid = jidify(jid)
+        jid = stringify_jid(jid)
         return if jid.empty?
 
         xuser = user_by_jid(jid)
@@ -71,7 +71,7 @@ module Vines
 
       private
       def user_by_jid(jid)
-        Sql::User.where(jid: jidify(jid)).includes(contacts: :groups).first
+        Sql::User.where(jid: stringify_jid(jid)).includes(contacts: :groups).first
       end
 
       def groups(contact)

@@ -8,14 +8,14 @@ module Vines
       PENDING_STANZAS_BATCH_SIZE   = 50
 
       def save_pending_stanza(jid, node)
-        user = Sql::User.where(jid: jidify(jid)).first
+        user = Sql::User.where(jid: stringify_jid(jid)).first
         return if user.nil? || user.pending_stanzas.count >= MAX_PENDING_STANZAS_PER_USER
 
         Sql::PendingStanza.create(user: user, xml: node.to_xml)
       end
 
       def find_pending_stanzas(jid, limit = PENDING_STANZAS_BATCH_SIZE)
-        user = Sql::User.where(jid: jidify(jid)).first
+        user = Sql::User.where(jid: stringify_jid(jid)).first
         return [] if user.nil?
 
         user.pending_stanzas.order(:created_at).limit(limit).all
@@ -25,7 +25,7 @@ module Vines
         if jid_or_ids.is_a?(Array)
           Sql::PendingStanza.where(id: jid_or_ids).delete_all
         else
-          user = Sql::User.where(jid: jidify(jid)).first
+          user = Sql::User.where(jid: stringify_jid(jid)).first
           return if user.nil?
 
           user.pending_stanzas.delete_all

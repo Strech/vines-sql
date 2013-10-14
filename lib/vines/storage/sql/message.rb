@@ -5,6 +5,8 @@ module Vines
   class Storage
     class Sql
 
+      RENEWED_MESSAGES_BATCH_SIZE = 50
+
       def save_message(message)
         from = message.from.bare.to_s
         with = message.to.bare.to_s
@@ -25,7 +27,7 @@ module Vines
       end
 
       def find_collections(jid, options)
-        jid = jidify(jid)
+        jid = stringify_jid(jid)
 
         if options[:with].nil?
           with_jid = Sql::Collection.arel_table[:jid_with].eq(jid)
@@ -56,8 +58,8 @@ module Vines
       end
 
       def find_messages(jid, with, options)
-        jid   = jidify(jid)
-        with  = jidify(with)
+        jid   = stringify_jid(jid)
+        with  = stringify_jid(with)
 
         hash = Digest::SHA1.hexdigest([jid, with].sort * '|')
         jids_condition = Sql::Collection.arel_table[:jids_hash].eq(hash)
@@ -77,9 +79,32 @@ module Vines
         ]
       end
 
+      def fetch_renewed!(jid, limit = RENEWED_MESSAGES_BATCH_SIZE, &block)
+        jid = stringify_jid(jid)
+
+        jid_from = Sql::Collection.arel_table[:jid_from].eq(jid)
+        jid_with = Sql::Collection.arel_table[:jid_with].eq(jid)
+
+        messages = Sql::Message.where(renew_needed: true)
+                               .where(jid_from.or jid_with)
+                               .joins(:collection)
+                               .includes(:collection)
+
+        messages.find_each(batch_size: limit) do |message|
+          from = message.collection.jid_with == jid ? message.collection.jid_from
+                                                    : message.collection.jid_with
+
+          block.call RenewedMessage.new(from, message.body)
+        end
+      end
+
+      # Em-safe & EM-blocking
       with_connection :save_message
       with_connection :find_collections
       with_connection :find_messages
+
+      # Em-blocking only
+      with_connection :fetch_renewed!, defer: false
 
     end # class Sql
   end # class Storage
