@@ -1,7 +1,6 @@
 $LOAD_PATH.unshift File.expand_path('../sql', __FILE__)
 
 require 'active_record'
-require 'digest/sha1'
 
 module Vines
   class Storage

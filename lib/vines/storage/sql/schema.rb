@@ -57,12 +57,19 @@ module Vines
 
           create_table :messages, force: args[:force] do |t|
             t.integer :collection_id, null: false
-            t.string :jid,            limit: 256, null: false
+            t.string :jid,            null: false, limit: 256
             t.text :body,             null: false
+            t.boolean :renew_needed,  null: false, default: true
             t.datetime :created_at,   null: false
           end
           add_index :messages, [:collection_id, :jid]
           add_index :messages, :created_at
+
+          execute <<-SQL
+            CREATE INDEX index_messages_on_renew_needed_is_true
+            ON messages USING btree(renew_needed)
+            WHERE renew_needed = TRUE;
+          SQL
 
           create_table :pending_stanzas, force: args[:force] do |t|
             t.integer  :user_id,    null: false
@@ -87,7 +94,7 @@ module Vines
 
       private
       def migrations_path
-        File.expand_path(File.join('..', 'db', 'migrations'), __FILE__)
+        File.expand_path(File.join('..', '..', 'db', 'migrations'), __FILE__)
       end
 
     end # class Sql
