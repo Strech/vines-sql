@@ -6,12 +6,12 @@ module Vines
     class Sql
 
       RENEWED_MESSAGES_BATCH_SIZE = 50
+      COLLECTION_JIDS_DELIMITER = '|'.freeze
 
       def save_message(message)
-        from = message.from.bare.to_s
-        with = message.to.bare.to_s
-
-        hash = Digest::SHA1.hexdigest([from, with].sort * '|')
+        from = stringify_jid(message.from)
+        with = stringify_jid(message.to)
+        hash = collection_hash(from, with)
 
         collection = Sql::Collection.where(jids_hash: hash).first_or_create(
           jid_from: from,
@@ -35,8 +35,8 @@ module Vines
 
           condition = with_jid.or(from_jid)
         else
-          with = JID.new(options[:with]).bare.to_s
-          hash = Digest::SHA1.hexdigest([jid, with].sort * '|')
+          with = stringify_jid(options[:with])
+          hash = collection_hash(jid, with)
 
           condition = Sql::Collection.arel_table[:jids_hash].eq(hash)
         end
@@ -58,10 +58,10 @@ module Vines
       end
 
       def find_messages(jid, with, options)
-        jid   = stringify_jid(jid)
-        with  = stringify_jid(with)
+        jid  = stringify_jid(jid)
+        with = stringify_jid(with)
 
-        hash = Digest::SHA1.hexdigest([jid, with].sort * '|')
+        hash = collection_hash(jid, with)
         jids_condition = Sql::Collection.arel_table[:jids_hash].eq(hash)
         time_condition = Sql::Message.arel_table[:created_at].gteq(options[:start].utc)
 
@@ -100,13 +100,32 @@ module Vines
         end
       end
 
+      def unmark_messages(jid, with)
+        jid  = stringify_jid(jid)
+        with = stringify_jid(with)
+        hash = collection_hash(jid, with)
+
+        collection_condition = Sql::Collection.arel_table[:jids_hash].eq(hash)
+        not_self = Sql::Message.arel_table[:jid].not_eq(jid)
+
+        Sql::Message.where(renew_needed: true).where(not_self)
+                    .where(collection_condition).joins(:collection)
+                    .update_all(renew_needed: false)
+      end
+
       # Em-safe & EM-blocking
       with_connection :save_message
       with_connection :find_collections
       with_connection :find_messages
+      with_connection :unmark_messages
 
       # Em-blocking only
       with_connection :fetch_renewed!, defer: false
+
+      private
+      def collection_hash(jid, other)
+        Digest::SHA1.hexdigest([jid, other].sort * COLLECTION_JIDS_DELIMITER)
+      end
 
     end # class Sql
   end # class Storage
