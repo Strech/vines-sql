@@ -84,9 +84,11 @@ module Vines
 
         jid_from = Sql::Collection.arel_table[:jid_from].eq(jid)
         jid_with = Sql::Collection.arel_table[:jid_with].eq(jid)
+        not_self = Sql::Message.arel_table[:jid].not_eq(jid)
 
         messages = Sql::Message.where(renew_needed: true)
                                .where(jid_from.or jid_with)
+                               .where(not_self)
                                .joins(:collection)
                                .includes(:collection)
 
@@ -94,7 +96,7 @@ module Vines
           from = message.collection.jid_with == jid ? message.collection.jid_from
                                                     : message.collection.jid_with
 
-          block.call RenewedMessage.new(from, message.body)
+          block.call RenewedMessage.new(from, jid, message.body)
         end
       end
 

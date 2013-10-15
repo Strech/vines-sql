@@ -37,7 +37,7 @@ module Vines
         belongs_to :collection
       end
 
-      RenewedMessage = Struct.new(:jid_from, :body)
+      RenewedMessage = Struct.new(:from, :to, :body)
 
       # Wrap the method with ActiveRecord connection pool logic, so we properly
       # return connections to the pool when we're finished with them. This also
